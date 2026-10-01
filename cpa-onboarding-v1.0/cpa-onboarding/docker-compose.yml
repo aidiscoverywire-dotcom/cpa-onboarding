@@ -1,0 +1,51 @@
+name: cpa-onboarding
+
+# Local dev: `docker compose up --build`
+# App waits for a HEALTHY db (pg_isready), but compose only orders container
+# start — it cannot wait for the app to be "ready". See lib/db.ts: it must
+# retry the initial connection on boot (connection retries with backoff),
+# because the db may still be initializing when the app container starts.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cpa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cpa}
+      POSTGRES_DB: ${POSTGRES_DB:-cpa_onboarding}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-cpa} -d ${POSTGRES_DB:-cpa_onboarding}
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    ports:
+      - "5432:5432"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Dev secrets live in .env.local (gitignored). Compose `environment` below
+    # overrides env_file values where they overlap.
+    env_file:
+      - .env.local
+    environment:
+      SERVICE_ROLE: staff
+      # Compose wins over .env.local: point the app at the compose db service.
+      # If POSTGRES_PASSWORD contains special chars, URL-encode them here.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cpa}:${POSTGRES_PASSWORD:-cpa}@db:5432/${POSTGRES_DB:-cpa_onboarding}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
